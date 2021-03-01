@@ -12,7 +12,7 @@
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
-uint ticks;
+uint ticks, nflag;
 
 void
 tvinit(void)
@@ -47,6 +47,10 @@ trap(struct trapframe *tf)
   }
 
   switch(tf->trapno){
+  cprintf("trapnumber : %d\n",tf->trapno);
+  case T_PGFLT:
+    pagefault();
+    break;
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
       acquire(&tickslock);
