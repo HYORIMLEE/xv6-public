@@ -9,7 +9,7 @@
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
-
+uint pflag;
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
 void
@@ -327,16 +327,17 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
+//===================================================
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0)
       goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
-      goto bad;
-    }
+    *pte &= ~PTE_W;
+    inc_refcounter(pa);
   }
+  lcr3(V2P(pgdir));
+//===================================================
   return d;
 
 bad:
@@ -384,6 +385,62 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   }
   return 0;
 }
+
+void
+pagefault(void){
+  uint va =rcr2();
+  uint refc;
+  pte_t *pte;
+  uint pa;
+  char *mem;
+  va = PGROUNDDOWN(va);
+  cprintf("Occure PageFault at %x!\n",va);
+  if (PGROUNDDOWN(va)>=KERNBASE){
+    cprintf("YOU ENTER INVAILD SPACE!\n");
+    kill(myproc()->pid);
+    return;
+  } 
+  cprintf("passed invalid access!\n");
+  if((pte = walkpgdir(myproc()->pgdir,(char*)va,0)==0)){
+    cprintf("there are no PTE!\n");
+    //kill(myproc()->pid);
+    myproc()->killed=1;
+    return;
+  }/*
+  if(!(*pte & PTE_P)){
+    cprintf("pagefault():\n");
+    kill(myproc()->pid);
+    return;
+  }*/
+  else {
+    cprintf("Enter else scope\n");
+    pa = PTE_ADDR(*pte);
+    if(get_refcounter(pa) == 1){
+      cprintf("change the write right\n");
+      *pte |= PTE_W;
+      cprintf("sUccess to chagne the write right\n");
+    }
+    else if(get_refcounter(pa)>1) {
+      cprintf("refcounter is more than 1 actually %d\n",get_refcounter(pa));
+      if((mem=kalloc()) == 0) {
+        cprintf("Pagefault occured! because of the mameory boundary!\n");
+        kill(myproc()->pid);
+        return;
+      }
+      memmove(mem,(char*)P2V(pa),PGSIZE);
+      dec_refcounter(pa);
+      *pte = V2P(mem) | PTE_P|PTE_U|PTE_W ;
+    }
+    
+    else {
+      panic("PageFault! Because refcounter is less than 1\n");
+    }
+    cprintf("Now I'll check lcr3\n");
+    lcr3(V2P(myproc()->pgdir));
+  }
+}
+
+  
 
 //PAGEBREAK!
 // Blank page.
